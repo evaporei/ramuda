@@ -1,4 +1,4 @@
-# λ
+# ラムダ
 
 Lambda calculus implementation for practice.
 
