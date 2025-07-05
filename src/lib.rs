@@ -90,12 +90,142 @@ impl<'a> Lexer<'a> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Expr {
+    Lit(Lit),
+    Var(String),
+    Lambda(Lambda), // "abstraction"
+    App(App),
+    LetIn(LetIn),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Lit {
+    Number(f64),
+    // Bool(bool),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Lambda {
+    param: String,
+    body: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct App {
+    lambda: Box<Expr>,
+    arg: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct LetIn {
+    var: String,
+    value: Box<Expr>,
+    body: Box<Expr>,
+}
+
+pub struct Parser {
+    tokens: Peekable<std::vec::IntoIter<Token>>,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens: tokens.into_iter().peekable(),
+        }
+    }
+    pub fn parse(&mut self) -> Expr {
+        self.parse_expr()
+    }
+    fn parse_expr(&mut self) -> Expr {
+        match self.tokens.peek() {
+            Some(Token::Lambda) => Expr::Lambda(self.parse_lambda()),
+            Some(Token::Let) => Expr::LetIn(self.parse_let_in()),
+            _ => self.parse_app(),
+            // _ => panic!("invalid token {t:?} when parsing 'expression'"),
+        }
+    }
+    fn parse_lambda(&mut self) -> Lambda {
+        self.tokens.next(); // Lambda
+        let ident = match self.tokens.next() {
+            Some(Token::Ident(i)) => i,
+            _ => panic!("ident/param not found when parsing 'lambda'"),
+        };
+        match self.tokens.next() {
+            Some(Token::Arrow) => {}
+            _ => panic!("'->' not found when parsing 'lambda'"),
+        };
+        let expr = self.parse_expr();
+        Lambda {
+            param: ident,
+            body: Box::new(expr),
+        }
+    }
+    fn parse_let_in(&mut self) -> LetIn {
+        self.tokens.next();
+        let ident = match self.tokens.next() {
+            Some(Token::Ident(i)) => i,
+            _ => panic!("ident/var not found when parsing 'let in'"),
+        };
+        match self.tokens.next() {
+            Some(Token::Equal) => {}
+            _ => panic!("'=' not found when parsing 'let in'"),
+        };
+        let val_expr = self.parse_expr();
+        match self.tokens.next() {
+            Some(Token::In) => {}
+            _ => panic!("'in' keyword not found when parsing 'let in'"),
+        };
+        let body_expr = self.parse_expr();
+        LetIn {
+            var: ident,
+            value: Box::new(val_expr),
+            body: Box::new(body_expr),
+        }
+    }
+    fn parse_app(&mut self) -> Expr {
+        let mut expr = self.parse_primary();
+
+        while !matches!(
+            self.tokens.peek(),
+            None | Some(Token::RParen) | Some(Token::In)
+        ) {
+            let arg = self.parse_primary();
+            expr = Expr::App(App {
+                lambda: Box::new(expr),
+                arg: Box::new(arg),
+            })
+        }
+
+        expr
+    }
+    fn parse_primary(&mut self) -> Expr {
+        match self.tokens.next() {
+            Some(Token::Number(n)) => Expr::Lit(Lit::Number(n)),
+            Some(Token::Ident(i)) => Expr::Var(i),
+            Some(Token::LParen) => {
+                let expr = self.parse_expr();
+                match self.tokens.next() {
+                    Some(Token::RParen) => {}
+                    _ => panic!("')' was not found when parsing expression"),
+                };
+                expr
+            }
+            Some(t) => panic!("unexpected token {t:?}"),
+            None => panic!("failed to parse primary, no token was found"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn tokenize(src: &str) -> Vec<Token> {
         Lexer::new(src).tokenize()
+    }
+    fn parse(src: &str) -> Expr {
+        Parser::new(tokenize(src)).parse()
     }
 
     #[test]
@@ -215,6 +345,126 @@ mod tests {
                 RParen,
                 RParen
             ]
+        );
+    }
+
+    #[test]
+    fn test_parse() {
+        assert_eq!(parse("3"), Expr::Lit(Lit::Number(3.0)));
+        assert_eq!(
+            parse("(\\x -> x) 3"),
+            Expr::App(App {
+                lambda: Box::new(Expr::Lambda(Lambda {
+                    param: "x".into(),
+                    body: Box::new(Expr::Var("x".into()))
+                })),
+                arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+            })
+        );
+        assert_eq!(
+            parse("(λx -> (λy -> x)) 1 2"),
+            Expr::App(App {
+                lambda: Box::new(Expr::App(App {
+                    lambda: Box::new(Expr::Lambda(Lambda {
+                        param: "x".into(),
+                        body: Box::new(Expr::Lambda(Lambda {
+                            param: "y".into(),
+                            body: Box::new(Expr::Var("x".into()))
+                        }))
+                    })),
+                    arg: Box::new(Expr::Lit(Lit::Number(1.0)))
+                })),
+                arg: Box::new(Expr::Lit(Lit::Number(2.0)))
+            })
+        );
+
+        // , arg: Lit(Number(1.0)) }) }) })
+        assert_eq!(
+            parse(
+                r###"(λodd -> odd 3)
+                            (λx -> equals (mod x 2) 1)"###
+            ),
+            Expr::App(App {
+                lambda: Box::new(Expr::Lambda(Lambda {
+                    param: "odd".into(),
+                    body: Box::new(Expr::App(App {
+                        lambda: Box::new(Expr::Var("odd".into())),
+                        arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+                    }))
+                })),
+                arg: Box::new(Expr::Lambda(Lambda {
+                    param: "x".into(),
+                    body: Box::new(Expr::App(App {
+                        lambda: Box::new(Expr::App(App {
+                            lambda: Box::new(Expr::Var("equals".into())),
+                            arg: Box::new(Expr::App(App {
+                                lambda: Box::new(Expr::App(App {
+                                    lambda: Box::new(Expr::Var("mod".into())),
+                                    arg: Box::new(Expr::Var("x".into()))
+                                })),
+                                arg: Box::new(Expr::Lit(Lit::Number(2.0)))
+                            }))
+                        })),
+                        arg: Box::new(Expr::Lit(Lit::Number(1.0)))
+                    }))
+                }))
+            })
+        );
+
+        assert_eq!(
+            parse("(λx -> x y (λy -> y)) y"),
+            Expr::App(App {
+                lambda: Box::new(Expr::Lambda(Lambda {
+                    param: "x".into(),
+                    body: Box::new(Expr::App(App {
+                        lambda: Box::new(Expr::App(App {
+                            lambda: Box::new(Expr::Var("x".into())),
+                            arg: Box::new(Expr::Var("y".into()))
+                        })),
+                        arg: Box::new(Expr::Lambda(Lambda {
+                            param: "y".into(),
+                            body: Box::new(Expr::Var("y".into()))
+                        }))
+                    }))
+                })),
+                arg: Box::new(Expr::Var("y".into()))
+            })
+        );
+
+        assert_eq!(
+            parse("let x = 3 in odd x"),
+            Expr::LetIn(LetIn {
+                var: "x".into(),
+                value: Box::new(Expr::Lit(Lit::Number(3.0))),
+                body: Box::new(Expr::App(App {
+                    lambda: Box::new(Expr::Var("odd".into())),
+                    arg: Box::new(Expr::Var("x".into()))
+                }))
+            })
+        );
+
+        assert_eq!(
+            parse(
+                r###"let x = (\x -> x)
+                            in x (odd (x 3))"###
+            ),
+            Expr::LetIn(LetIn {
+                var: "x".into(),
+                value: Box::new(Expr::Lambda(Lambda {
+                    param: "x".into(),
+                    body: Box::new(Expr::Var("x".into()))
+                })),
+                body: Box::new(Expr::App(App {
+                    lambda: Box::new(Expr::Var("x".into())),
+                    arg: Box::new(Expr::App(App {
+                        lambda: Box::new(Expr::Var("odd".into())),
+                        arg: Box::new(Expr::App(App {
+                            lambda: Box::new(Expr::Var("x".into())),
+                            arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+                        }))
+                    }))
+                }))
+            })
         );
     }
 }
