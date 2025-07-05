@@ -42,11 +42,16 @@ impl<'a> Lexer<'a> {
                 }
                 '=' => tokens.push(Token::Equal),
                 _ if ch.is_ascii_digit() => {
-                    tokens.push(self.tokenize_number());
+                    tokens.push(Token::Number(self.read_number()));
                     continue;
                 }
-                _ if ch.is_alphabetic() => {
-                    tokens.push(self.tokenize_ident());
+                _ if ch.is_alphabetic() || *ch == '_' => {
+                    let ident = self.read_ident();
+                    match &ident[..] {
+                        "in" => tokens.push(Token::In),
+                        "let" => tokens.push(Token::Let),
+                        _ => tokens.push(Token::Ident(ident)),
+                    }
                     continue;
                 }
                 _ => panic!("unexpected char {ch}"),
@@ -59,7 +64,7 @@ impl<'a> Lexer<'a> {
     fn next_match(&mut self, ch: char) -> bool {
         matches!(self.chars.peek(), Some(next_ch) if *next_ch == ch)
     }
-    fn tokenize_number(&mut self) -> Token {
+    fn read_number(&mut self) -> f64 {
         let mut n = String::new();
         n.push(self.chars.next().unwrap());
         while let Some(next_ch) = self.chars.peek() {
@@ -69,37 +74,19 @@ impl<'a> Lexer<'a> {
             n.push(*next_ch);
             self.chars.next();
         }
-        Token::Number(n.parse().expect("expected valid number"))
+        n.parse().expect("expected valid number")
     }
-    fn tokenize_ident(&mut self) -> Token {
+    fn read_ident(&mut self) -> String {
         let mut ident = String::new();
-        let ch = self.chars.next().unwrap();
-        ident.push(ch);
-        // clumsy
-        match (ch, self.chars.peek()) {
-            ('i', Some('n')) => {
-                self.chars.next();
-                return Token::In;
-            }
-            ('l', Some('e')) => {
-                ident.push('e');
-                self.chars.next();
-                if self.next_match('t') {
-                    self.chars.next();
-                    return Token::Let;
-                }
-            }
-            _ => {}
-        }
+        ident.push(self.chars.next().unwrap());
         while let Some(next_ch) = self.chars.peek() {
-            // TODO: uhm, should be better
-            if next_ch.is_whitespace() || next_ch.is_ascii_punctuation() {
+            if !next_ch.is_alphabetic() && *next_ch != '_' {
                 break;
             }
             ident.push(*next_ch);
             self.chars.next();
         }
-        Token::Ident(ident)
+        ident
     }
 }
 
