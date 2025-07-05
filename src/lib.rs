@@ -183,5 +183,43 @@ mod tests {
                 Ident("y".into())
             ]
         );
+        assert_eq!(
+            tokenize("let x = 3 in odd x"),
+            vec![
+                Let,
+                Ident("x".into()),
+                Equal,
+                Number(3.0),
+                In,
+                Ident("odd".into()),
+                Ident("x".into())
+            ]
+        );
+        assert_eq!(
+            tokenize(
+                r###"let x = (\x -> x)
+                            in x (odd (x 3))"###
+            ),
+            vec![
+                Let,
+                Ident("x".into()),
+                Equal,
+                LParen,
+                Lambda,
+                Ident("x".into()),
+                Arrow,
+                Ident("x".into()),
+                RParen,
+                In,
+                Ident("x".into()),
+                LParen,
+                Ident("odd".into()),
+                LParen,
+                Ident("x".into()),
+                Number(3.0),
+                RParen,
+                RParen
+            ]
+        );
     }
 }
