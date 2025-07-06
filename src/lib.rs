@@ -355,6 +355,21 @@ impl TypeInferencer {
                 };
                 Ok((ty, HashMap::new()))
             }
+            Expr::Lambda(Lambda { param, body }) => {
+                let param_ty = self.fresh_type_var();
+                let mut new_env = env.clone();
+                new_env.insert(param.clone(), param_ty.clone());
+
+                let (body_ty, subst) = self.infer(&new_env, body)?;
+                let param_ty_subst = self.apply_subst(&subst, &param_ty);
+                Ok((
+                    Type::Func(FuncTy {
+                        arg: Box::new(param_ty_subst),
+                        ret: Box::new(body_ty),
+                    }),
+                    subst,
+                ))
+            }
             _ => todo!(),
         }
     }
@@ -370,6 +385,11 @@ impl TypeInferencer {
             }),
             _ => ty.clone(),
         }
+    }
+    fn fresh_type_var(&mut self) -> Type {
+        let name = format!("t{}", self.var_count);
+        self.var_count += 1;
+        Type::TypeVar(name)
     }
 }
 
@@ -640,11 +660,26 @@ mod tests {
 
     #[test]
     fn test_type_inference() {
+        // literals
         assert_eq!(infer_type(&Expr::Lit(Lit::Number(42))).unwrap(), Type::Int);
         assert_eq!(infer_type(&Expr::Lit(Lit::Bool(true))).unwrap(), Type::Bool);
         assert_eq!(
             infer_type(&Expr::Lit(Lit::String("hello".into()))).unwrap(),
             Type::String
         );
+
+        // lambdas
+        let identity = Expr::Lambda(Lambda {
+            param: "x".into(),
+            body: Box::new(Expr::Var("x".into())),
+        });
+        let ty = infer_type(&identity).unwrap();
+
+        // λx -> x should have type t0 -> t0
+        if let Type::Func(FuncTy { arg, ret }) = ty {
+            assert_eq!(arg, ret);
+        } else {
+            panic!("Expected function type");
+        }
     }
 }
