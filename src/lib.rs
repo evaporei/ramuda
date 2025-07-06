@@ -8,6 +8,7 @@ pub enum Token {
     Lambda, // \ or λ
     Equal,
     Ident(String),
+    String(String),
     Number(f64),
     Bool(bool),
     Let,
@@ -41,6 +42,10 @@ impl<'a> Lexer<'a> {
                     tokens.push(Token::Arrow);
                 }
                 '=' => tokens.push(Token::Equal),
+                '"' => {
+                    tokens.push(Token::String(self.read_string()));
+                    continue;
+                }
                 _ if ch.is_ascii_digit() => {
                     tokens.push(Token::Number(self.read_number()));
                     continue;
@@ -65,6 +70,39 @@ impl<'a> Lexer<'a> {
     }
     fn next_match(&mut self, ch: char) -> bool {
         matches!(self.chars.peek(), Some(next_ch) if *next_ch == ch)
+    }
+    fn read_string(&mut self) -> String {
+        self.chars.next();
+        let mut s = String::new();
+        while let Some(next_ch) = self.chars.peek() {
+            match next_ch {
+                '"' => {
+                    self.chars.next();
+                    break;
+                }
+                '\\' => {
+                    self.chars.next();
+                    if let Some(escaped) = self.chars.peek() {
+                        match escaped {
+                            'n' => s.push('\n'),
+                            't' => s.push('\t'),
+                            'r' => s.push('\r'),
+                            '\\' => s.push('\\'),
+                            '"' => s.push('"'),
+                            _ => {
+                                s.push('\\');
+                                s.push(*escaped);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    s.push(*next_ch);
+                }
+            }
+            self.chars.next();
+        }
+        s
     }
     fn read_number(&mut self) -> f64 {
         let mut n = String::new();
@@ -103,6 +141,7 @@ pub enum Expr {
 
 #[derive(Debug, PartialEq)]
 pub enum Lit {
+    String(String),
     Number(f64),
     Bool(bool),
 }
@@ -144,7 +183,6 @@ impl Parser {
             Some(Token::Lambda) => Expr::Lambda(self.parse_lambda()),
             Some(Token::Let) => Expr::LetIn(self.parse_let_in()),
             _ => self.parse_app(),
-            // _ => panic!("invalid token {t:?} when parsing 'expression'"),
         }
     }
     fn parse_lambda(&mut self) -> Lambda {
@@ -203,6 +241,7 @@ impl Parser {
     }
     fn parse_primary(&mut self) -> Expr {
         match self.tokens.next() {
+            Some(Token::String(s)) => Expr::Lit(Lit::String(s)),
             Some(Token::Number(n)) => Expr::Lit(Lit::Number(n)),
             Some(Token::Bool(b)) => Expr::Lit(Lit::Bool(b)),
             Some(Token::Ident(i)) => Expr::Var(i),
@@ -236,6 +275,7 @@ mod tests {
         use Token::*;
         assert_eq!(tokenize("3"), vec![Number(3.0),]);
         assert_eq!(tokenize("true"), vec![Bool(true),]);
+        assert_eq!(tokenize("\"bananas!\""), vec![String("bananas!".into()),]);
         assert_eq!(
             tokenize("(\\x -> x) 3"),
             vec![
@@ -356,6 +396,10 @@ mod tests {
     fn test_parse() {
         assert_eq!(parse("3"), Expr::Lit(Lit::Number(3.0)));
         assert_eq!(parse("false"), Expr::Lit(Lit::Bool(false)));
+        assert_eq!(
+            parse("\"bananas!\""),
+            Expr::Lit(Lit::String("bananas!".into()))
+        );
         assert_eq!(
             parse("(\\x -> x) 3"),
             Expr::App(App {
