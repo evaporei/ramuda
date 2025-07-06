@@ -383,7 +383,6 @@ mod tests {
             })
         );
 
-        // , arg: Lit(Number(1.0)) }) }) })
         assert_eq!(
             parse(
                 r###"(λodd -> odd 3)
