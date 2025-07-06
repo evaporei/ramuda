@@ -330,13 +330,13 @@ pub struct TypeInferencer {
 }
 
 pub type Substitution = HashMap<String, Type>;
-pub type TypeEnv = HashMap<String, Type>;
+pub type Context = HashMap<String, Type>;
 
 impl TypeInferencer {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn infer(&mut self, env: &TypeEnv, expr: &Expr) -> Result<(Type, Substitution), TypeError> {
+    pub fn infer(&mut self, ctx: &Context, expr: &Expr) -> Result<(Type, Substitution), TypeError> {
         match expr {
             Expr::Lit(lit) => {
                 let ty = match lit {
@@ -347,7 +347,7 @@ impl TypeInferencer {
                 Ok((ty, HashMap::new()))
             }
             Expr::Var(var) => {
-                let ty = match env.get(var) {
+                let ty = match ctx.get(var) {
                     Some(t) => t.clone(),
                     None => {
                         return Err(TypeError::UnboundVar(UnboundVarError { var: var.clone() }));
@@ -356,11 +356,11 @@ impl TypeInferencer {
                 Ok((ty, HashMap::new()))
             }
             Expr::Lambda(Lambda { param, body }) => {
-                let param_ty = self.fresh_type_var();
-                let mut new_env = env.clone();
-                new_env.insert(param.clone(), param_ty.clone());
+                let param_ty = self.new_type_var();
+                let mut new_ctx = ctx.clone();
+                new_ctx.insert(param.clone(), param_ty.clone());
 
-                let (body_ty, subst) = self.infer(&new_env, body)?;
+                let (body_ty, subst) = self.infer(&new_ctx, body)?;
                 let param_ty_subst = self.apply_subst(&subst, &param_ty);
                 Ok((
                     Type::Func(FuncTy {
@@ -369,6 +369,25 @@ impl TypeInferencer {
                     }),
                     subst,
                 ))
+            }
+            Expr::App(App { lambda, arg }) => {
+                let (lambda_ty, subst1) = self.infer(ctx, lambda)?;
+                let ctx1 = self.apply_subst_ctx(&subst1, ctx);
+                let (arg_ty, subst2) = self.infer(&ctx1, arg)?;
+
+                let result_ty = self.new_type_var();
+                let lambda_ty_subst = self.apply_subst(&subst2, &lambda_ty);
+                let expected_lambda_ty = Type::Func(FuncTy {
+                    arg: Box::new(arg_ty),
+                    ret: Box::new(result_ty.clone()),
+                });
+
+                let subst3 = self.unify(&lambda_ty_subst, &expected_lambda_ty)?;
+                let final_subst =
+                    self.compose_subst(&subst3, &self.compose_subst(&subst2, &subst1));
+                let final_result_ty = self.apply_subst(&subst3, &result_ty);
+
+                Ok((final_result_ty, final_subst))
             }
             _ => todo!(),
         }
@@ -386,10 +405,71 @@ impl TypeInferencer {
             _ => ty.clone(),
         }
     }
-    fn fresh_type_var(&mut self) -> Type {
+    fn apply_subst_ctx(&self, subst: &Substitution, ctx: &Context) -> Context {
+        ctx.iter()
+            .map(|(k, v)| (k.clone(), self.apply_subst(subst, v)))
+            .collect()
+    }
+    fn new_type_var(&mut self) -> Type {
         let name = format!("t{}", self.var_count);
         self.var_count += 1;
         Type::TypeVar(name)
+    }
+    fn unify(&self, ty1: &Type, ty2: &Type) -> Result<Substitution, TypeError> {
+        use Type::*;
+        match (ty1, ty2) {
+            (Int, Int) | (String, String) | (Bool, Bool) => Ok(HashMap::new()),
+            (TypeVar(var), ty) | (ty, TypeVar(var)) => {
+                if TypeVar(var.clone()) == *ty {
+                    Ok(HashMap::new())
+                } else if self.occurs_check(var, ty) {
+                    Err(TypeError::OccursCheck(OccursCheckError {
+                        var: var.clone(),
+                        ty: ty.clone(),
+                    }))
+                } else {
+                    let mut subst = HashMap::new();
+                    subst.insert(var.clone(), ty.clone());
+                    Ok(subst)
+                }
+            }
+            (
+                Func(FuncTy {
+                    arg: arg1,
+                    ret: ret1,
+                }),
+                Func(FuncTy {
+                    arg: arg2,
+                    ret: ret2,
+                }),
+            ) => {
+                let subst1 = self.unify(arg1, arg2)?;
+                let ret1_subst = self.apply_subst(&subst1, ret1);
+                let ret2_subst = self.apply_subst(&subst1, ret2);
+                let subst2 = self.unify(&ret1_subst, &ret2_subst)?;
+                Ok(self.compose_subst(&subst2, &subst1))
+            }
+            _ => Err(TypeError::Unification(UnificationError {
+                ty1: ty1.clone(),
+                ty2: ty2.clone(),
+            })),
+        }
+    }
+    fn occurs_check(&self, var: &str, ty: &Type) -> bool {
+        match ty {
+            Type::TypeVar(name) => var == name,
+            Type::Func(FuncTy { arg, ret }) => {
+                self.occurs_check(var, arg) || self.occurs_check(var, ret)
+            }
+            _ => false,
+        }
+    }
+    fn compose_subst(&self, subst1: &Substitution, subst2: &Substitution) -> Substitution {
+        let mut result = subst1.clone();
+        for (k, v) in subst2 {
+            result.insert(k.clone(), self.apply_subst(subst1, v));
+        }
+        result
     }
 }
 
@@ -668,7 +748,7 @@ mod tests {
             Type::String
         );
 
-        // lambdas
+        // lambda
         let identity = Expr::Lambda(Lambda {
             param: "x".into(),
             body: Box::new(Expr::Var("x".into())),
@@ -681,5 +761,18 @@ mod tests {
         } else {
             panic!("Expected function type");
         }
+
+        // application
+        let identity = Expr::Lambda(Lambda {
+            param: "x".into(),
+            body: Box::new(Expr::Var("x".into())),
+        });
+        let app = Expr::App(App {
+            lambda: Box::new(identity),
+            arg: Box::new(Expr::Lit(Lit::Number(42))),
+        });
+
+        // (λx -> x) 42 should have type Int
+        assert_eq!(infer_type(&app).unwrap(), Type::Int);
     }
 }
