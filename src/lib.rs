@@ -389,7 +389,14 @@ impl TypeInferencer {
 
                 Ok((final_result_ty, final_subst))
             }
-            _ => todo!(),
+            Expr::LetIn(LetIn { var, value, body }) => {
+                let (value_ty, subst1) = self.infer(ctx, value)?;
+                let mut new_env = self.apply_subst_ctx(&subst1, ctx);
+                new_env.insert(var.clone(), value_ty);
+                let (body_type, s2) = self.infer(&new_env, body)?;
+
+                Ok((body_type, self.compose_subst(&s2, &subst1)))
+            }
         }
     }
     pub fn apply_subst(&self, subst: &Substitution, ty: &Type) -> Type {
@@ -774,5 +781,30 @@ mod tests {
 
         // (λx -> x) 42 should have type Int
         assert_eq!(infer_type(&app).unwrap(), Type::Int);
+
+        // let in
+        let expr = Expr::LetIn(LetIn {
+            var: "x".into(),
+            value: Box::new(Expr::Lit(Lit::Number(5))),
+            body: Box::new(Expr::Var("x".into())),
+        });
+        // let x = 5 in x should have type Int
+        assert_eq!(infer_type(&expr).unwrap(), Type::Int);
+
+        // complex
+        let identity = Expr::Lambda(Lambda {
+            param: "x".into(),
+            body: Box::new(Expr::Var("x".into())),
+        });
+        let expr = Expr::LetIn(LetIn {
+            var: "f".into(),
+            value: Box::new(identity),
+            body: Box::new(Expr::App(App {
+                lambda: Box::new(Expr::Var("f".into())),
+                arg: Box::new(Expr::Lit(Lit::Number(42))),
+            })),
+        });
+        // let f = λx.x in f 42 should have type Int
+        assert_eq!(infer_type(&expr).unwrap(), Type::Int);
     }
 }
