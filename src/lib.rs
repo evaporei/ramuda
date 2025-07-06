@@ -9,7 +9,7 @@ pub enum Token {
     Equal,
     Ident(String),
     String(String),
-    Number(f64),
+    Number(i64),
     Bool(bool),
     Let,
     In,
@@ -36,10 +36,14 @@ impl<'a> Lexer<'a> {
                 '\\' | 'λ' => tokens.push(Token::Lambda),
                 '-' => {
                     self.chars.next();
-                    if !self.next_match('>') {
-                        panic!("expected '>' after '-' to form arrow");
+                    match self.chars.peek() {
+                        Some('>') => tokens.push(Token::Arrow),
+                        Some(next_ch) if next_ch.is_ascii_digit() => {
+                            tokens.push(Token::Number(-self.read_number()));
+                            continue;
+                        }
+                        _ => panic!("expected '>' after '-' to form arrow"),
                     }
-                    tokens.push(Token::Arrow);
                 }
                 '=' => tokens.push(Token::Equal),
                 '"' => {
@@ -67,9 +71,6 @@ impl<'a> Lexer<'a> {
         }
 
         tokens
-    }
-    fn next_match(&mut self, ch: char) -> bool {
-        matches!(self.chars.peek(), Some(next_ch) if *next_ch == ch)
     }
     fn read_string(&mut self) -> String {
         self.chars.next();
@@ -104,7 +105,7 @@ impl<'a> Lexer<'a> {
         }
         s
     }
-    fn read_number(&mut self) -> f64 {
+    fn read_number(&mut self) -> i64 {
         let mut n = String::new();
         n.push(self.chars.next().unwrap());
         while let Some(next_ch) = self.chars.peek() {
@@ -142,7 +143,7 @@ pub enum Expr {
 #[derive(Debug, PartialEq)]
 pub enum Lit {
     String(String),
-    Number(f64),
+    Number(i64),
     Bool(bool),
 }
 
@@ -273,7 +274,8 @@ mod tests {
     #[test]
     fn test_tokenize() {
         use Token::*;
-        assert_eq!(tokenize("3"), vec![Number(3.0),]);
+        assert_eq!(tokenize("3"), vec![Number(3),]);
+        assert_eq!(tokenize("-3"), vec![Number(-3),]);
         assert_eq!(tokenize("true"), vec![Bool(true),]);
         assert_eq!(tokenize("\"bananas!\""), vec![String("bananas!".into()),]);
         assert_eq!(
@@ -285,7 +287,7 @@ mod tests {
                 Arrow,
                 Ident("x".into()),
                 RParen,
-                Number(3.0)
+                Number(3)
             ]
         );
         assert_eq!(
@@ -302,8 +304,8 @@ mod tests {
                 Ident("x".into()),
                 RParen,
                 RParen,
-                Number(1.0),
-                Number(2.0)
+                Number(1),
+                Number(2)
             ]
         );
         assert_eq!(
@@ -317,7 +319,7 @@ mod tests {
                 Ident("odd".into()),
                 Arrow,
                 Ident("odd".into()),
-                Number(3.0),
+                Number(3),
                 RParen,
                 LParen,
                 Lambda,
@@ -327,9 +329,9 @@ mod tests {
                 LParen,
                 Ident("mod".into()),
                 Ident("x".into()),
-                Number(2.0),
+                Number(2),
                 RParen,
-                Number(1.0),
+                Number(1),
                 RParen
             ]
         );
@@ -358,7 +360,7 @@ mod tests {
                 Let,
                 Ident("x".into()),
                 Equal,
-                Number(3.0),
+                Number(3),
                 In,
                 Ident("odd".into()),
                 Ident("x".into())
@@ -385,7 +387,7 @@ mod tests {
                 Ident("odd".into()),
                 LParen,
                 Ident("x".into()),
-                Number(3.0),
+                Number(3),
                 RParen,
                 RParen
             ]
@@ -394,7 +396,8 @@ mod tests {
 
     #[test]
     fn test_parse() {
-        assert_eq!(parse("3"), Expr::Lit(Lit::Number(3.0)));
+        assert_eq!(parse("3"), Expr::Lit(Lit::Number(3)));
+        assert_eq!(parse("-3"), Expr::Lit(Lit::Number(-3)));
         assert_eq!(parse("false"), Expr::Lit(Lit::Bool(false)));
         assert_eq!(
             parse("\"bananas!\""),
@@ -407,7 +410,7 @@ mod tests {
                     param: "x".into(),
                     body: Box::new(Expr::Var("x".into()))
                 })),
-                arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+                arg: Box::new(Expr::Lit(Lit::Number(3)))
             })
         );
         assert_eq!(
@@ -421,9 +424,9 @@ mod tests {
                             body: Box::new(Expr::Var("x".into()))
                         }))
                     })),
-                    arg: Box::new(Expr::Lit(Lit::Number(1.0)))
+                    arg: Box::new(Expr::Lit(Lit::Number(1)))
                 })),
-                arg: Box::new(Expr::Lit(Lit::Number(2.0)))
+                arg: Box::new(Expr::Lit(Lit::Number(2)))
             })
         );
 
@@ -437,7 +440,7 @@ mod tests {
                     param: "odd".into(),
                     body: Box::new(Expr::App(App {
                         lambda: Box::new(Expr::Var("odd".into())),
-                        arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+                        arg: Box::new(Expr::Lit(Lit::Number(3)))
                     }))
                 })),
                 arg: Box::new(Expr::Lambda(Lambda {
@@ -450,10 +453,10 @@ mod tests {
                                     lambda: Box::new(Expr::Var("mod".into())),
                                     arg: Box::new(Expr::Var("x".into()))
                                 })),
-                                arg: Box::new(Expr::Lit(Lit::Number(2.0)))
+                                arg: Box::new(Expr::Lit(Lit::Number(2)))
                             }))
                         })),
-                        arg: Box::new(Expr::Lit(Lit::Number(1.0)))
+                        arg: Box::new(Expr::Lit(Lit::Number(1)))
                     }))
                 }))
             })
@@ -483,7 +486,7 @@ mod tests {
             parse("let x = 3 in odd x"),
             Expr::LetIn(LetIn {
                 var: "x".into(),
-                value: Box::new(Expr::Lit(Lit::Number(3.0))),
+                value: Box::new(Expr::Lit(Lit::Number(3))),
                 body: Box::new(Expr::App(App {
                     lambda: Box::new(Expr::Var("odd".into())),
                     arg: Box::new(Expr::Var("x".into()))
@@ -508,7 +511,7 @@ mod tests {
                         lambda: Box::new(Expr::Var("odd".into())),
                         arg: Box::new(Expr::App(App {
                             lambda: Box::new(Expr::Var("x".into())),
-                            arg: Box::new(Expr::Lit(Lit::Number(3.0)))
+                            arg: Box::new(Expr::Lit(Lit::Number(3)))
                         }))
                     }))
                 }))
