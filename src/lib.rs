@@ -9,7 +9,7 @@ pub enum Token {
     Equal,
     Ident(String),
     Number(f64),
-    // Bool(bool),
+    Bool(bool),
     Let,
     In,
 }
@@ -50,6 +50,8 @@ impl<'a> Lexer<'a> {
                     match &ident[..] {
                         "in" => tokens.push(Token::In),
                         "let" => tokens.push(Token::Let),
+                        "true" => tokens.push(Token::Bool(true)),
+                        "false" => tokens.push(Token::Bool(false)),
                         _ => tokens.push(Token::Ident(ident)),
                     }
                     continue;
@@ -102,7 +104,7 @@ pub enum Expr {
 #[derive(Debug, PartialEq)]
 pub enum Lit {
     Number(f64),
-    // Bool(bool),
+    Bool(bool),
 }
 
 #[derive(Debug, PartialEq)]
@@ -202,6 +204,7 @@ impl Parser {
     fn parse_primary(&mut self) -> Expr {
         match self.tokens.next() {
             Some(Token::Number(n)) => Expr::Lit(Lit::Number(n)),
+            Some(Token::Bool(b)) => Expr::Lit(Lit::Bool(b)),
             Some(Token::Ident(i)) => Expr::Var(i),
             Some(Token::LParen) => {
                 let expr = self.parse_expr();
@@ -232,6 +235,7 @@ mod tests {
     fn test_tokenize() {
         use Token::*;
         assert_eq!(tokenize("3"), vec![Number(3.0),]);
+        assert_eq!(tokenize("true"), vec![Bool(true),]);
         assert_eq!(
             tokenize("(\\x -> x) 3"),
             vec![
@@ -351,6 +355,7 @@ mod tests {
     #[test]
     fn test_parse() {
         assert_eq!(parse("3"), Expr::Lit(Lit::Number(3.0)));
+        assert_eq!(parse("false"), Expr::Lit(Lit::Bool(false)));
         assert_eq!(
             parse("(\\x -> x) 3"),
             Expr::App(App {
