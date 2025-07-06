@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars};
+use std::{collections::HashMap, fmt, iter::Peekable, str::Chars};
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
@@ -260,6 +260,119 @@ impl Parser {
     }
 }
 
+// Hindley-Milner
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    Int,
+    String,
+    Bool,
+    Func(FuncTy),
+    TypeVar(String),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FuncTy {
+    arg: Box<Type>,
+    ret: Box<Type>,
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Int => write!(f, "Int"),
+            Self::String => write!(f, "String"),
+            Self::Bool => write!(f, "Bool"),
+            Self::Func(func) => write!(f, "({} -> {})", func.arg, func.ret),
+            Self::TypeVar(name) => write!(f, "{}", name),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TypeError {
+    UnboundVar(UnboundVarError),
+    Unification(UnificationError),
+    OccursCheck(OccursCheckError),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct UnboundVarError {
+    var: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct UnificationError {
+    ty1: Type,
+    ty2: Type,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct OccursCheckError {
+    var: String,
+    ty: Type,
+}
+
+impl std::fmt::Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::UnboundVar(err) => write!(f, "Unbound variable: {}", err.var),
+            Self::Unification(err) => write!(f, "Cannot unify {} with {}", err.ty1, err.ty2),
+            Self::OccursCheck(err) => write!(f, "Occurs check failed: {} in {}", err.var, err.ty),
+        }
+    }
+}
+
+impl std::error::Error for TypeError {}
+
+#[derive(Default)]
+pub struct TypeInferencer {
+    var_count: usize,
+}
+
+pub type Substitution = HashMap<String, Type>;
+pub type TypeEnv = HashMap<String, Type>;
+
+impl TypeInferencer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn infer(&mut self, env: &TypeEnv, expr: &Expr) -> Result<(Type, Substitution), TypeError> {
+        match expr {
+            Expr::Lit(lit) => {
+                let ty = match lit {
+                    Lit::String(_) => Type::String,
+                    Lit::Number(_) => Type::Int,
+                    Lit::Bool(_) => Type::Bool,
+                };
+                Ok((ty, HashMap::new()))
+            }
+            Expr::Var(var) => {
+                let ty = match env.get(var) {
+                    Some(t) => t.clone(),
+                    None => {
+                        return Err(TypeError::UnboundVar(UnboundVarError { var: var.clone() }));
+                    }
+                };
+                Ok((ty, HashMap::new()))
+            }
+            _ => todo!(),
+        }
+    }
+    pub fn apply_subst(&self, subst: &Substitution, ty: &Type) -> Type {
+        match ty {
+            Type::TypeVar(name) => match subst.get(name) {
+                Some(replacement) => self.apply_subst(subst, replacement),
+                None => ty.clone(),
+            },
+            Type::Func(FuncTy { arg, ret }) => Type::Func(FuncTy {
+                arg: Box::new(self.apply_subst(subst, arg)),
+                ret: Box::new(self.apply_subst(subst, ret)),
+            }),
+            _ => ty.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +382,12 @@ mod tests {
     }
     fn parse(src: &str) -> Expr {
         Parser::new(tokenize(src)).parse()
+    }
+    fn infer_type(expr: &Expr) -> Result<Type, TypeError> {
+        let mut inferencer = TypeInferencer::new();
+        let env = HashMap::new();
+        let (ty, subst) = inferencer.infer(&env, expr)?;
+        Ok(inferencer.apply_subst(&subst, &ty))
     }
 
     #[test]
@@ -516,6 +635,16 @@ mod tests {
                     }))
                 }))
             })
+        );
+    }
+
+    #[test]
+    fn test_type_inference() {
+        assert_eq!(infer_type(&Expr::Lit(Lit::Number(42))).unwrap(), Type::Int);
+        assert_eq!(infer_type(&Expr::Lit(Lit::Bool(true))).unwrap(), Type::Bool);
+        assert_eq!(
+            infer_type(&Expr::Lit(Lit::String("hello".into()))).unwrap(),
+            Type::String
         );
     }
 }
